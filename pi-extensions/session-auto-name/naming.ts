@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Api, AssistantMessage, Context, Model } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Context, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 
 export const REQUEST_TIMEOUT_MS = 30_000;
@@ -126,8 +126,9 @@ export async function requestName(
   model: Model<Api>,
   input: NamingInput,
   parentSignal: AbortSignal,
-  timeoutMs = REQUEST_TIMEOUT_MS,
+  options: { thinkingLevel?: ModelThinkingLevel; timeoutMs?: number } = {},
 ): Promise<NamingDecision> {
+  const { thinkingLevel, timeoutMs = REQUEST_TIMEOUT_MS } = options;
   parentSignal.throwIfAborted();
   const context = buildNamingContext(input, model);
   const deadline = new AbortController();
@@ -149,6 +150,7 @@ export async function requestName(
           signal,
           timeoutMs,
           maxRetries: 0,
+          reasoning: thinkingLevel === "off" ? undefined : thinkingLevel,
           maxTokens: Math.min(MAX_OUTPUT_TOKENS, model.maxTokens),
           cacheRetention: "none",
           sessionId: randomUUID(),

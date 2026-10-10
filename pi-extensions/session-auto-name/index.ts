@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext, InputEvent, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import { loadConfig, resolveModel } from "./config.ts";
@@ -6,6 +7,13 @@ import type { ModelConfig } from "./config.ts";
 import { extractFinalReply, MAX_PROMPT_CHARS, MAX_REPLY_CHARS, requestName, truncateText } from "./naming.ts";
 
 const STATE_TYPE = "session-auto-name";
+
+/** Snapshot of the selected model and requested level; null means no level was specified. */
+interface NamingRequestMetadata {
+  provider: string;
+  modelId: string;
+  thinkingLevel: ModelThinkingLevel | null;
+}
 
 interface SessionState {
   id: string;
@@ -55,10 +63,10 @@ export default function sessionAutoName(pi: ExtensionAPI): void {
     ctx.ui.notify(`session-auto-name：${message}`, "warning");
   }
 
-  function record(current: SessionState, ctx: ExtensionContext, phase: string): void {
+  function record(current: SessionState, ctx: ExtensionContext, phase: string, request?: NamingRequestMetadata): void {
     if (!active(current, ctx)) return;
     try {
-      pi.appendEntry(STATE_TYPE, { version: 1, phase });
+      pi.appendEntry(STATE_TYPE, { version: 1, phase, ...request });
     } catch {
       warn(current, ctx, "无法保存命名状态");
     }
@@ -69,20 +77,25 @@ export default function sessionAutoName(pi: ExtensionAPI): void {
   }
 
   async function nameInitially(current: SessionState, ctx: ExtensionContext): Promise<void> {
+    let request: NamingRequestMetadata | undefined;
     try {
-      const decision = await requestName(ctx.modelRegistry, resolveModel(current.config, ctx), {
+      const model = resolveModel(current.config, ctx);
+      const thinkingLevel = current.config?.thinkingLevel;
+      request = { provider: model.provider, modelId: model.id, thinkingLevel: thinkingLevel ?? null };
+      record(current, ctx, "initial_started", request);
+      const decision = await requestName(ctx.modelRegistry, model, {
         stage: "initial", prompt: current.prompt,
-      }, current.controller.signal);
+      }, current.controller.signal, { thinkingLevel });
       if (!active(current, ctx)) return;
       if (decision.action === "rename") {
         applyTitle(current, ctx, decision.title);
         current.firstTitle = decision.title;
       }
-      record(current, ctx, "initial_completed");
+      record(current, ctx, "initial_completed", request);
     } catch (error) {
       if (!active(current, ctx)) return;
       warn(current, ctx, error instanceof Error ? error.message : "第一次命名失败");
-      record(current, ctx, "initial_failed");
+      record(current, ctx, "initial_failed", request);
     }
   }
 
@@ -93,19 +106,23 @@ export default function sessionAutoName(pi: ExtensionAPI): void {
       record(current, ctx, "refinement_skipped");
       return;
     }
-    record(current, ctx, "refinement_started");
+    let request: NamingRequestMetadata | undefined;
     try {
-      const decision = await requestName(ctx.modelRegistry, resolveModel(current.config, ctx), {
+      const model = resolveModel(current.config, ctx);
+      const thinkingLevel = current.config?.thinkingLevel;
+      request = { provider: model.provider, modelId: model.id, thinkingLevel: thinkingLevel ?? null };
+      record(current, ctx, "refinement_started", request);
+      const decision = await requestName(ctx.modelRegistry, model, {
         stage: "refine", prompt: current.prompt, firstTitle: current.firstTitle, reply,
-      }, current.controller.signal);
+      }, current.controller.signal, { thinkingLevel });
       if (!active(current, ctx)) return;
       // "keep" deliberately does not restore the first title over a later manual name.
       if (decision.action === "rename") applyTitle(current, ctx, decision.title);
-      record(current, ctx, "completed");
+      record(current, ctx, "completed", request);
     } catch (error) {
       if (!active(current, ctx)) return;
       warn(current, ctx, error instanceof Error ? error.message : "第二次命名失败");
-      record(current, ctx, "refinement_failed");
+      record(current, ctx, "refinement_failed", request);
     }
   }
 
@@ -145,7 +162,6 @@ export default function sessionAutoName(pi: ExtensionAPI): void {
       return;
     }
     current.prompt = truncateText(input.text.trim(), MAX_PROMPT_CHARS);
-    record(current, ctx, "initial_started");
     // Do not return/await this promise: Pi awaits event handlers on the main conversation path.
     current.initialTask = nameInitially(current, ctx);
   });

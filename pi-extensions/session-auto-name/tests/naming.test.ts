@@ -93,6 +93,7 @@ test("request uses a separate context, bounded output, no retries, and an indepe
       assert.equal(model, sessionModel);
       assert.equal(context.messages.length, 1);
       assert.equal(options?.maxRetries, 0);
+      assert.equal(options?.reasoning, undefined);
       assert.equal(options?.cacheRetention, "none");
       assert.equal(options?.maxTokens, 512);
       assert.equal(options?.timeoutMs, 30_000);
@@ -107,6 +108,22 @@ test("request uses a separate context, bounded output, no retries, and an indepe
   assert.notEqual(ids[0], ids[1]);
 });
 
+test("configured thinking levels are passed as provider-neutral reasoning options", async () => {
+  for (const thinkingLevel of ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const) {
+    let calls = 0;
+    const registry: Parameters<typeof requestName>[0] = {
+      streamSimple(_model, _context, options) {
+        calls++;
+        assert.equal(options?.reasoning, thinkingLevel === "off" ? undefined : thinkingLevel);
+        return { result: async () => assistant('{"title":"Fix login"}') } as AssistantMessageEventStream;
+      },
+    };
+    await requestName(registry, sessionModel, { stage: "initial", prompt: "Fix login" },
+      new AbortController().signal, { thinkingLevel });
+    assert.equal(calls, 1);
+  }
+});
+
 test("timeout settles even if a provider ignores abort and never returns", async () => {
   let requestSignal: AbortSignal | undefined;
   const registry: Parameters<typeof requestName>[0] = {
@@ -117,7 +134,7 @@ test("timeout settles even if a provider ignores abort and never returns", async
   };
   // Keep the test process alive: production deadline timers intentionally use unref().
   const keepAlive = delay(30);
-  await assert.rejects(requestName(registry, sessionModel, { stage: "initial", prompt: "Task" }, new AbortController().signal, 5), /超时/);
+  await assert.rejects(requestName(registry, sessionModel, { stage: "initial", prompt: "Task" }, new AbortController().signal, { timeoutMs: 5 }), /超时/);
   assert.equal(requestSignal?.aborted, true);
   await keepAlive;
 });

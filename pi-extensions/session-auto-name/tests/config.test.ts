@@ -45,8 +45,33 @@ test("untrusted project config is never used, even when malformed", (t) => {
   assert.deepEqual(loadConfig(f.agentDir, f.cwd, false), configured);
 });
 
+test("optional thinking levels are preserved without merging lower-priority settings", (t) => {
+  const f = files(t);
+  for (const thinkingLevel of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+    f.global({ ...configured, thinkingLevel });
+    assert.deepEqual(loadConfig(f.agentDir, f.cwd, true), { ...configured, thinkingLevel });
+  }
+  f.global({ ...configured, thinkingLevel: "low" });
+  const project = { provider: "project-provider", modelId: "project-model" };
+  f.project(project);
+  assert.deepEqual(loadConfig(f.agentDir, f.cwd, true), project);
+  f.project({ ...project, thinkingLevel: "high" });
+  assert.deepEqual(loadConfig(f.agentDir, f.cwd, true), { ...project, thinkingLevel: "high" });
+  assert.deepEqual(loadConfig(f.agentDir, f.cwd, false), { ...configured, thinkingLevel: "low" });
+});
+
+for (const thinkingLevel of [null, "", "LOW", " low ", "invalid", 1, false, [], {}]) {
+  test(`invalid thinking level fails closed: ${JSON.stringify(thinkingLevel)}`, (t) => {
+    const f = files(t);
+    f.global(configured);
+    f.project({ ...configured, thinkingLevel });
+    assert.throws(() => loadConfig(f.agentDir, f.cwd, true), /thinkingLevel/);
+  });
+}
+
 for (const invalid of [null, [], "text", { provider: "test" }, { modelId: "model" },
-  { provider: "", modelId: "model" }, { provider: "p", modelId: 1 }, { ...configured, apiKey: "secret" }]) {
+  { thinkingLevel: "low" }, { provider: "", modelId: "model" }, { provider: "p", modelId: 1 },
+  { ...configured, apiKey: "secret" }]) {
   test(`invalid model configuration fails closed: ${JSON.stringify(invalid)}`, (t) => {
     const f = files(t);
     f.global(configured);

@@ -1,14 +1,16 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export interface ModelConfig {
   provider: string;
   modelId: string;
+  thinkingLevel?: ModelThinkingLevel;
 }
 
 export const CONFIG_FILE = "session-auto-name.json";
+const THINKING_LEVELS: readonly ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /** Read the highest-priority complete model selection; never merge model identities. */
 export function loadConfig(agentDir: string, cwd: string, projectTrusted: boolean): ModelConfig | undefined {
@@ -37,13 +39,20 @@ export function loadConfig(agentDir: string, cwd: string, projectTrusted: boolea
     const keys = Object.keys(config);
     if (keys.length === 0) continue;
     if (
-      keys.some((key) => key !== "provider" && key !== "modelId") ||
+      keys.some((key) => key !== "provider" && key !== "modelId" && key !== "thinkingLevel") ||
       typeof config.provider !== "string" || !config.provider.trim() ||
       typeof config.modelId !== "string" || !config.modelId.trim()
     ) {
-      throw new Error(`配置仅支持成对填写非空 provider 和 modelId：${path}`);
+      throw new Error(`配置仅支持成对填写非空 provider、modelId 和可选 thinkingLevel：${path}`);
     }
-    return { provider: config.provider.trim(), modelId: config.modelId.trim() };
+    const result: ModelConfig = { provider: config.provider.trim(), modelId: config.modelId.trim() };
+    if (config.thinkingLevel !== undefined) {
+      if (!THINKING_LEVELS.includes(config.thinkingLevel as ModelThinkingLevel)) {
+        throw new Error(`配置 thinkingLevel 必须是 ${THINKING_LEVELS.join("、")} 之一：${path}`);
+      }
+      result.thinkingLevel = config.thinkingLevel as ModelThinkingLevel;
+    }
+    return result;
   }
   return undefined;
 }

@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { assistant, flush, harness, namingModel, requestData, sessionModel } from "./helpers.ts";
 
 const initial = { title: "修复 OAuth 登录问题" };
 const refined = { action: "rename", title: "修复 OAuth 回调状态校验" };
+const sessionRequest = { provider: sessionModel.provider, modelId: sessionModel.id, thinkingLevel: null };
+
+function namingMetadata(h: ReturnType<typeof harness>) {
+  return h.manager.getEntries().filter((entry) => entry.type === "custom")
+    .filter((entry) => entry.customType === "session-auto-name").map((entry) => entry.data);
+}
 
 test("both stages run in the background, rename once each, and never repeat on later turns", async (t) => {
   const h = harness(t);
@@ -36,6 +42,8 @@ test("both stages run in the background, rename once each, and never repeat on l
   const states = h.manager.getEntries().filter((entry) => entry.type === "custom");
   assert.ok(states.length > 0);
   assert.ok(states.every((entry) => entry.customType === "session-auto-name"));
+  assert.deepEqual(namingMetadata(h), ["initial_started", "initial_completed", "refinement_started", "completed"]
+    .map((phase) => ({ version: 1, phase, ...sessionRequest })));
   assert.doesNotMatch(JSON.stringify(states), /OAuth|firstUserPrompt|finalAssistantReply/);
 });
 
@@ -195,6 +203,9 @@ test("a failed first name still permits one refinement attempt", async (t) => {
   assert.deepEqual(h.names, [refined.title]);
   assert.equal(h.warnings.length, 1);
   assert.doesNotMatch(h.warnings[0]!, /SECRET/);
+  assert.deepEqual(namingMetadata(h), ["initial_started", "initial_failed", "refinement_started", "completed"]
+    .map((phase) => ({ version: 1, phase, ...sessionRequest })));
+  assert.doesNotMatch(JSON.stringify(namingMetadata(h)), /SECRET/);
 });
 
 test("failed refinement preserves the current name, never retries, and warns at most once", async (t) => {
@@ -211,6 +222,8 @@ test("failed refinement preserves the current name, never retries, and warns at 
   assert.deepEqual(h.names, [initial.title]);
   assert.equal(h.calls.length, 2);
   assert.equal(h.warnings.length, 1);
+  assert.deepEqual(namingMetadata(h), ["initial_started", "initial_completed", "refinement_started", "refinement_failed"]
+    .map((phase) => ({ version: 1, phase, ...sessionRequest })));
 });
 
 for (const scenario of ["aborted", "error", "empty"] as const) {
@@ -221,6 +234,7 @@ for (const scenario of ["aborted", "error", "empty"] as const) {
     h.answer(scenario === "empty" ? "" : "Partial", scenario === "error" ? "error" : "stop");
     await h.settle(scenario === "aborted");
     await h.respond(0, initial);
+    assert.deepEqual(namingMetadata(h).at(-1), { version: 1, phase: "refinement_skipped" });
     await h.begin("Try again");
     h.answer("Later success");
     await h.settle();
@@ -284,6 +298,16 @@ test("a genuinely new persistent session names and persists metadata", async (t)
   await h.respond(0, initial);
   assert.equal(h.manager.getSessionName(), initial.title);
   assert.ok(h.manager.getEntries().some((entry) => entry.type === "session_info" && entry.name === initial.title));
+  h.answer("Fixed");
+  await h.settle();
+  await flush();
+  await h.respond(1, { action: "keep" });
+  const persisted = readFileSync(h.manager.getSessionFile()!, "utf8").trim().split("\n")
+    .map((line) => JSON.parse(line))
+    .filter((entry) => entry.type === "custom" && entry.customType === "session-auto-name")
+    .map((entry) => entry.data);
+  assert.deepEqual(persisted, ["initial_started", "initial_completed", "refinement_started", "completed"]
+    .map((phase) => ({ version: 1, phase, ...sessionRequest })));
 });
 
 for (const reason of ["new", "resume", "fork", "reload", "quit"] as const) {
@@ -300,6 +324,7 @@ for (const reason of ["new", "resume", "fork", "reload", "quit"] as const) {
     assert.equal(h.calls.length, 1);
     assert.equal(h.names.length, 0);
     assert.equal(h.warnings.length, 0);
+    assert.deepEqual(namingMetadata(h), [], "late requests must not write metadata into another session");
   });
 }
 
@@ -348,33 +373,66 @@ test("new session can start its own naming while old results are still in flight
   assert.deepEqual(h.names, ["完成新任务"]);
 });
 
-test("configured model is independent; unconfigured model follows the session at each request", async (t) => {
+test("configured model and thinking level are independent; unconfigured model follows the session", async (t) => {
   const h = harness(t);
   await h.start();
   await h.begin("Task");
   assert.equal(h.calls[0]!.model, sessionModel);
-  await h.respond(0, initial);
+  assert.equal(h.calls[0]!.options.reasoning, undefined);
+  assert.deepEqual(namingMetadata(h), [{ version: 1, phase: "initial_started", ...sessionRequest }]);
   h.setModel(namingModel);
+  await h.respond(0, initial);
   h.answer("Final");
   await h.settle();
   await flush();
   assert.equal(h.calls[1]!.model, namingModel);
+  h.setModel(sessionModel);
   await h.respond(1, { action: "keep" });
+  assert.deepEqual(namingMetadata(h), [
+    { version: 1, phase: "initial_started", ...sessionRequest },
+    { version: 1, phase: "initial_completed", ...sessionRequest },
+    { version: 1, phase: "refinement_started", ...sessionRequest, modelId: namingModel.id },
+    { version: 1, phase: "completed", ...sessionRequest, modelId: namingModel.id },
+  ], "metadata must retain each request's model even when the main model changes while it is pending");
 
   await h.emit({ type: "session_shutdown", reason: "new" });
   h.replaceSession();
   h.setModel(sessionModel);
-  writeFileSync(join(h.agentDir, "session-auto-name.json"), JSON.stringify({ provider: namingModel.provider, modelId: namingModel.id }));
+  writeFileSync(join(h.agentDir, "session-auto-name.json"), JSON.stringify({
+    provider: namingModel.provider, modelId: namingModel.id, thinkingLevel: "low",
+  }));
   await h.start("new");
   await h.begin("Another task");
   assert.equal(h.calls[2]!.model, namingModel);
+  assert.equal(h.calls[2]!.options.reasoning, "low");
   await h.respond(2, initial);
   h.answer("Final");
   await h.settle();
   await flush();
   assert.equal(h.calls[3]!.model, namingModel);
+  assert.equal(h.calls[3]!.options.reasoning, "low");
   assert.equal(h.ctx.model, sessionModel, "naming must not change the main model");
   await h.respond(3, { action: "keep" });
+  assert.deepEqual(namingMetadata(h), ["initial_started", "initial_completed", "refinement_started", "completed"]
+    .map((phase) => ({ version: 1, phase, provider: namingModel.provider, modelId: namingModel.id, thinkingLevel: "low" })));
+});
+
+test("explicit off is distinguishable from an unspecified level, without copying model secrets", async (t) => {
+  const h = harness(t);
+  writeFileSync(join(h.agentDir, "session-auto-name.json"), JSON.stringify({
+    provider: namingModel.provider, modelId: namingModel.id, thinkingLevel: "off",
+  }));
+  t.mock.method(h.registry, "find", () => ({
+    ...namingModel, headers: { Authorization: "SECRET" }, baseUrl: "https://example.invalid/SECRET",
+  }));
+  await h.start();
+  await h.begin("SECRET prompt");
+  assert.equal(h.calls[0]!.options.reasoning, undefined);
+  await h.respond(0, initial);
+  assert.deepEqual(namingMetadata(h), ["initial_started", "initial_completed"].map((phase) => ({
+    version: 1, phase, provider: namingModel.provider, modelId: namingModel.id, thinkingLevel: "off",
+  })));
+  assert.doesNotMatch(JSON.stringify(namingMetadata(h)), /SECRET|Authorization|baseUrl|headers/);
 });
 
 test("bad configuration and unknown models never silently fall back", async (t) => {
@@ -393,6 +451,10 @@ test("bad configuration and unknown models never silently fall back", async (t) 
   await flush();
   assert.equal(h.calls.length, 0);
   assert.equal(h.warnings.length, 2, "one warning per session, not per failed stage");
+  assert.deepEqual(namingMetadata(h), [
+    { version: 1, phase: "initial_failed" },
+    { version: 1, phase: "refinement_failed" },
+  ], "a failure before model resolution must not claim that a model request started");
 });
 
 test("handled input is replaced by the next accepted prompt before naming", async (t) => {

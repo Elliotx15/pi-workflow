@@ -11,7 +11,7 @@ pi install ./pi-workflow/pi-extensions/session-auto-name
 
 重新启动 Pi，或执行 `/reload` 后新建 session。本扩展使用 `@earendil-works/pi-coding-agent` 的扩展 API，已适配 Pi 1.1.0。
 
-## 模型配置（可选）
+## 模型与推理级别配置（可选）
 
 在以下位置创建 `session-auto-name.json`：
 
@@ -21,10 +21,13 @@ pi install ./pi-workflow/pi-extensions/session-auto-name
 ```json
 {
   "provider": "your-provider",
-  "modelId": "your-model-id"
+  "modelId": "your-model-id",
+  "thinkingLevel": "low"
 }
 ```
 
-填写 Pi 已注册的 provider 和 model ID，接口地址与认证沿用 Pi 配置。优先级为 **项目配置 > 全局配置 > 当前 session 模型**；不配置即可跟随 session 模型。修改后执行 `/reload`。
+填写 Pi 已注册的 provider 和 model ID，两者必须成对填写，接口地址与认证沿用 Pi 配置。`thinkingLevel` 可选，支持 `off`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`；省略时保持原有行为，不显式指定推理级别。该设置仅影响两次命名请求，不修改主会话的模型或推理级别。
+
+优先级为 **项目配置 > 全局配置 > 当前 session 模型**；配置整组覆盖，不合并字段。不配置即可跟随 session 模型。修改后执行 `/reload`，再新建 session。
 
 仅对 TUI 中的新 session 生效，不补命名已有 session。每个符合条件的 session 最多额外发起两次命名请求。
