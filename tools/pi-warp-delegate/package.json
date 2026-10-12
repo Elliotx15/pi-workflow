@@ -1,0 +1,22 @@
+{
+  "name": "pi-warp-delegate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Delegate tasks to independent interactive Pi sessions in Warp and query their explicitly reported task states.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22.19.0" },
+  "bin": { "pi-warp-delegate": "dist/cli.js" },
+  "files": ["dist/", "README.md"],
+  "scripts": {
+    "build": "tsc && chmod +x dist/cli.js",
+    "check": "tsc --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@iarna/toml": "2.2.5",
+    "@types/node": "22.20.4",
+    "typescript": "5.9.3"
+  }
+}
