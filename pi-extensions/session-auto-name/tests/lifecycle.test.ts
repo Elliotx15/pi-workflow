@@ -146,23 +146,116 @@ test("recovery uses the eventual successful answer, not a failed agent_end", asy
   await h.respond(1, { action: "keep" });
 });
 
-test("manual names neither disable naming nor cancel outstanding results", async (t) => {
-  const h = harness(t);
-  h.manager.appendSessionInfo("Manual before first prompt");
-  await h.start();
-  await h.begin("Fix login");
-  h.manager.appendSessionInfo("Manual while initial naming runs");
-  await h.respond(0, initial);
-  assert.equal(h.manager.getSessionName(), initial.title);
-  h.answer("Fixed callback validation");
-  await h.settle();
-  await flush();
-  h.manager.appendSessionInfo("Manual while refinement runs");
-  await h.respond(1, refined);
-  assert.equal(h.manager.getSessionName(), refined.title);
-});
+for (const reason of ["startup", "new"] as const) {
+  test(`${reason} with an initial name skips config, requests, and naming metadata`, async (t) => {
+    const h = harness(t, { persistent: true });
+    h.manager.appendSessionInfo("Initial name");
+    writeFileSync(join(h.agentDir, "session-auto-name.json"), "broken");
+    await h.start(reason);
+    await h.begin("Fix login");
+    h.answer("Fixed");
+    await h.settle();
+    assert.equal(h.manager.getSessionName(), "Initial name");
+    assert.deepEqual(h.names, []);
+    assert.deepEqual(h.calls, []);
+    assert.deepEqual(h.warnings, []);
+    assert.deepEqual(namingMetadata(h), []);
+    await h.rename("");
+    await h.begin("A later prompt cannot re-enable naming");
+    assert.deepEqual(h.calls, []);
+  });
+}
 
-test("keep leaves an intervening manual name intact", async (t) => {
+for (const boundary of ["input", "before_agent_start"] as const) {
+  test(`a name set before ${boundary} prevents the first request, even without a notification`, async (t) => {
+    const h = harness(t);
+    await h.start();
+    if (boundary === "before_agent_start") await h.input("Fix login");
+    h.manager.appendSessionInfo("External name");
+    if (boundary === "input") await h.input("Fix login");
+    await h.beforeStart("Fix login");
+    h.answer("Fixed");
+    await h.settle();
+    assert.equal(h.manager.getSessionName(), "External name");
+    assert.deepEqual(h.calls, []);
+    assert.deepEqual(namingMetadata(h), []);
+  });
+}
+
+for (const stage of ["initial", "refinement"] as const) {
+  for (const outcome of ["rename", "keep", "error"] as const) {
+    test(`external naming cancels pending ${stage}, ignoring a late ${outcome} result`, async (t) => {
+      const h = harness(t);
+      await h.start();
+      await h.begin("Fix login");
+      if (stage === "refinement") await h.respond(0, initial);
+      h.answer("Fixed callback validation");
+      await h.settle();
+      await flush();
+      const index = stage === "initial" ? 0 : 1;
+      const metadata = namingMetadata(h);
+      await h.rename("External name");
+      assert.equal(h.calls[index]!.options.signal?.aborted, true);
+      if (outcome === "error") {
+        h.calls[index]!.result.reject(new Error("Late provider failure"));
+        await flush();
+      } else {
+        await h.respond(index, outcome === "keep" ? { action: "keep" } : stage === "initial" ? initial : refined);
+      }
+      assert.equal(h.manager.getSessionName(), "External name");
+      assert.deepEqual(h.names, stage === "initial" ? [] : [initial.title]);
+      assert.deepEqual(namingMetadata(h), metadata, "cancellation must not record completion or failure");
+      assert.deepEqual(h.warnings, []);
+      await h.rename("");
+      await h.begin("A later prompt cannot re-enable naming");
+      h.answer("Another answer");
+      await h.settle();
+      await flush();
+      assert.equal(h.calls.length, index + 1);
+      assert.equal(h.manager.getSessionName(), undefined);
+    });
+  }
+
+  test(`a silent external write is protected when the ${stage} result arrives`, async (t) => {
+    const h = harness(t);
+    await h.start();
+    await h.begin("Fix login");
+    if (stage === "refinement") await h.respond(0, initial);
+    h.answer("Fixed");
+    await h.settle();
+    await flush();
+    const index = stage === "initial" ? 0 : 1;
+    // Same text as our own/returned title must still count as an external write.
+    h.manager.appendSessionInfo(initial.title);
+    await h.respond(index, stage === "initial" ? initial : refined);
+    assert.equal(h.manager.getSessionName(), initial.title);
+    assert.deepEqual(h.names, stage === "initial" ? [] : [initial.title]);
+    assert.equal(h.calls[index]!.options.signal?.aborted, true);
+    assert.equal(h.calls.length, index + 1);
+    assert.deepEqual(h.warnings, []);
+  });
+}
+
+for (const firstResult of ["success", "failure"] as const) {
+  test(`external naming after initial ${firstResult} prevents refinement`, async (t) => {
+    const h = harness(t);
+    await h.start();
+    await h.begin("Fix login");
+    if (firstResult === "success") await h.respond(0, initial);
+    else {
+      h.calls[0]!.result.reject(new Error("Initial failure"));
+      await flush();
+    }
+    h.manager.appendSessionInfo("External name");
+    h.answer("Fixed");
+    await h.settle();
+    await flush();
+    assert.equal(h.calls.length, 1);
+    assert.equal(h.manager.getSessionName(), "External name");
+  });
+}
+
+test("setting the same title through an external API cancels refinement", async (t) => {
   const h = harness(t);
   await h.start();
   await h.begin("Fix login");
@@ -170,15 +263,54 @@ test("keep leaves an intervening manual name intact", async (t) => {
   h.answer("Fixed");
   await h.settle();
   await flush();
-  h.manager.appendSessionInfo("Manual name");
-  await h.respond(1, { action: "keep" });
-  assert.equal(h.manager.getSessionName(), "Manual name");
+  await h.rename(initial.title);
+  assert.equal(h.calls[1]!.options.signal?.aborted, true);
+  await h.respond(1, refined);
+  assert.equal(h.manager.getSessionName(), initial.title);
   assert.deepEqual(h.names, [initial.title]);
 });
 
-test("identical titles do not create duplicate name writes", async (t) => {
+test("synchronous external renaming during our own notification is not claimed as our write", async (t) => {
   const h = harness(t);
-  h.manager.appendSessionInfo(initial.title);
+  const setName = h.pi.setSessionName;
+  t.mock.method(h.pi, "setSessionName", (name: string) => {
+    setName(name);
+    h.manager.appendSessionInfo("External name");
+  });
+  await h.start();
+  await h.begin("Fix login");
+  h.answer("Fixed");
+  await h.settle();
+  await h.respond(0, initial);
+  assert.equal(h.manager.getSessionName(), "External name");
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls[0]!.options.signal?.aborted, true);
+  assert.deepEqual(namingMetadata(h), [{ version: 1, phase: "initial_started", ...sessionRequest }]);
+});
+
+test("delayed notifications for our own writes do not stop refinement", async (t) => {
+  const h = harness(t);
+  t.mock.method(h.pi, "setSessionName", (name: string) => {
+    h.names.push(name);
+    h.manager.appendSessionInfo(name);
+  });
+  await h.start();
+  await h.begin("Fix login");
+  await h.respond(0, initial);
+  h.answer("Fixed");
+  await h.settle();
+  await flush();
+  await h.respond(1, refined);
+  // The first event may reach us only after the second write; use entries, not event text.
+  await h.emit({ type: "session_info_changed", name: initial.title });
+  await h.emit({ type: "session_info_changed", name: refined.title });
+  assert.deepEqual(h.names, [initial.title, refined.title]);
+  assert.equal(h.calls[1]!.options.signal?.aborted, false);
+  assert.equal(h.manager.getSessionName(), refined.title);
+});
+
+test("identical automatically generated titles do not create duplicate name writes", async (t) => {
+  const h = harness(t);
   await h.start();
   await h.begin("Fix login");
   await h.respond(0, initial);
@@ -186,7 +318,7 @@ test("identical titles do not create duplicate name writes", async (t) => {
   await h.settle();
   await flush();
   await h.respond(1, { action: "rename", title: initial.title });
-  assert.equal(h.names.length, 0);
+  assert.deepEqual(h.names, [initial.title]);
 });
 
 test("a failed first name still permits one refinement attempt", async (t) => {

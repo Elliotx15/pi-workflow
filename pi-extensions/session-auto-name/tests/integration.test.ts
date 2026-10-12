@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import type { TestContext } from "node:test";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import {
@@ -36,12 +37,14 @@ test("pi install accepts the extension directory and the real loader discovers i
   assert.equal(result.extensions.length, 1);
   const extension = result.extensions[0]!;
   assert.equal(extension.path, join(extensionDir, "index.ts"));
-  for (const name of ["session_start", "input", "before_agent_start", "agent_settled", "session_tree", "session_shutdown"]) {
+  for (const name of ["session_start", "session_info_changed", "input", "before_agent_start", "agent_settled", "session_tree", "session_shutdown"]) {
     assert.ok(extension.handlers.has(name), `Missing ${name} handler`);
   }
 });
 
-test("real Pi lifecycle stays non-blocking and names the first exchange, not a queued follow-up", { timeout: 10_000 }, async (t) => {
+type Takeover = "none" | "startup" | "initial" | "refinement" | "extension" | "notification";
+
+async function checkRealLifecycle(t: TestContext, takeover: Takeover): Promise<void> {
   const cwd = tempDirectory(t);
   const agentDir = join(cwd, "agent");
   mkdirSync(agentDir);
@@ -61,6 +64,9 @@ test("real Pi lifecycle stays non-blocking and names the first exchange, not a q
   const namingInputs: Record<string, unknown>[] = [];
   let mainRequests = 0;
   let initialStream: AssistantMessageEventStream | undefined;
+  let refinementStream: AssistantMessageEventStream | undefined;
+  let namingSignal: AbortSignal | undefined;
+  const externalName = "External name";
   function complete(stream: AssistantMessageEventStream, text: string): void {
     const result = { ...assistant(text), api: model.api };
     stream.push({ type: "start", partial: { ...result, content: [], stopReason: "pending" } });
@@ -71,7 +77,7 @@ test("real Pi lifecycle stays non-blocking and names the first exchange, not a q
   }
   modelRuntime.registerProvider(model.provider, {
     api: model.api, baseUrl: model.baseUrl, apiKey: "not-a-real-key", models: [model],
-    streamSimple(_model, context) {
+    streamSimple(_model, context, options) {
       const stream = createAssistantMessageEventStream();
       const last = context.messages.findLast((message) => message.role === "user")!;
       const text = typeof last.content === "string" ? last.content : last.content
@@ -79,8 +85,9 @@ test("real Pi lifecycle stays non-blocking and names the first exchange, not a q
       if (text.startsWith('{"firstUserPrompt":')) {
         const data = JSON.parse(text) as Record<string, unknown>;
         namingInputs.push(data);
+        namingSignal = options?.signal;
         if ("finalAssistantReply" in data) {
-          complete(stream, '{"action":"rename","title":"修复 OAuth 回调状态校验"}');
+          refinementStream = stream;
         } else {
           initialStream = stream;
         }
@@ -104,10 +111,17 @@ test("real Pi lifecycle stays non-blocking and names the first exchange, not a q
   const resourceLoader = new DefaultResourceLoader({
     cwd, agentDir, settingsManager, additionalExtensionPaths: [extensionDir],
     noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
+    extensionFactories: [(pi) => {
+      pi.registerCommand("external-name", {
+        description: "Set a name from another extension",
+        handler: async () => { pi.setSessionName(externalName); },
+      });
+    }],
   });
   await resourceLoader.reload();
   assert.deepEqual(resourceLoader.getExtensions().errors, []);
   const manager = SessionManager.inMemory(cwd);
+  if (takeover === "startup") manager.appendSessionInfo(externalName);
   const { session } = await createAgentSession({
     cwd, agentDir, modelRuntime, model, thinkingLevel: "off", resourceLoader, settingsManager,
     sessionManager: manager, tools: [],
@@ -124,23 +138,49 @@ test("real Pi lifecycle stays non-blocking and names the first exchange, not a q
   });
   const refined = deferred<void>();
   session.subscribe((event) => {
-    if (event.type === "session_info_changed" && event.name === "修复 OAuth 回调状态校验") refined.resolve();
+    if (event.type !== "session_info_changed") return;
+    if (event.name === "修复 OAuth 回调状态校验") refined.resolve();
+    if (takeover === "notification" && event.name === "修复 OAuth 登录问题") session.setSessionName(externalName);
   });
   await session.prompt("修复 OAuth 登录问题");
   assert.equal(mainRequests, 2);
   assert.equal(session.getLastAssistantText(), "Completed the unrelated follow-up task.");
-  assert.equal(manager.getSessionName(), undefined);
-  assert.equal(namingInputs.length, 1);
-  assert.ok(initialStream);
-  complete(initialStream, '{"title":"修复 OAuth 登录问题"}');
-  await refined.promise;
-  await flush();
-  assert.equal(manager.getSessionName(), "修复 OAuth 回调状态校验");
-  assert.equal(namingInputs.length, 2);
-  assert.deepEqual(namingInputs[1], {
-    firstUserPrompt: "修复 OAuth 登录问题", initialTitle: "修复 OAuth 登录问题",
-    finalAssistantReply: "已修复 OAuth 回调中的 state 参数校验。",
-  });
+  if (takeover === "startup") {
+    assert.equal(namingInputs.length, 0);
+  } else {
+    assert.equal(manager.getSessionName(), undefined);
+    assert.equal(namingInputs.length, 1);
+    assert.ok(initialStream);
+    if (takeover === "initial") session.setSessionName(externalName);
+    if (takeover === "extension") await session.prompt("/external-name");
+    // The provider deliberately ignores cancellation and still delivers its late result.
+    complete(initialStream, '{"title":"修复 OAuth 登录问题"}');
+    await flush();
+    if (takeover === "none" || takeover === "refinement") {
+      assert.equal(namingInputs.length, 2);
+      assert.deepEqual(namingInputs[1], {
+        firstUserPrompt: "修复 OAuth 登录问题", initialTitle: "修复 OAuth 登录问题",
+        finalAssistantReply: "已修复 OAuth 回调中的 state 参数校验。",
+      });
+      assert.ok(refinementStream);
+      if (takeover === "refinement") session.setSessionName(externalName);
+      complete(refinementStream, '{"action":"rename","title":"修复 OAuth 回调状态校验"}');
+      if (takeover === "none") await refined.promise;
+      await flush();
+    } else {
+      assert.equal(namingInputs.length, 1, "external naming must prevent refinement");
+    }
+    assert.equal(namingSignal?.aborted, takeover !== "none");
+  }
+  assert.equal(manager.getSessionName(), takeover === "none" ? "修复 OAuth 回调状态校验" : externalName);
   assert.deepEqual(errors, []);
   assert.deepEqual(warnings, []);
-});
+}
+
+test("real Pi lifecycle stays non-blocking and names the first exchange, not a queued follow-up", { timeout: 10_000 },
+  (t) => checkRealLifecycle(t, "none"));
+
+for (const takeover of ["startup", "initial", "refinement", "extension", "notification"] as const) {
+  test(`real Pi lifecycle protects external names: ${takeover}`, { timeout: 10_000 },
+    (t) => checkRealLifecycle(t, takeover));
+}

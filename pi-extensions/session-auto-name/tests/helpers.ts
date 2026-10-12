@@ -90,13 +90,21 @@ export function harness(t: TestContext, options: { mode?: ExtensionContext["mode
       return () => { const index = list.indexOf(handler); if (index >= 0) list.splice(index, 1); };
     },
     getSessionName: () => manager.getSessionName(),
-    setSessionName: (name: string) => { names.push(name); manager.appendSessionInfo(name); },
+    setSessionName: (name: string) => {
+      names.push(name);
+      manager.appendSessionInfo(name);
+      void emit({ type: "session_info_changed", name: manager.getSessionName() });
+    },
     appendEntry: (customType: string, data: unknown) => manager.appendCustomEntry(customType, data),
   } as unknown as ExtensionAPI;
   sessionAutoName(pi);
 
   const emit = async (event: ExtensionEvent) => {
     for (const handler of handlers.get(event.type) ?? []) await handler(event, ctx);
+  };
+  const rename = async (name: string) => {
+    manager.appendSessionInfo(name);
+    await emit({ type: "session_info_changed", name: manager.getSessionName() });
   };
   const beforeStart = async (prompt: string) => emit({
     type: "before_agent_start", prompt, systemPrompt: "Never send this system prompt to the naming model",
@@ -129,7 +137,7 @@ export function harness(t: TestContext, options: { mode?: ExtensionContext["mode
     get manager() { return manager; },
     setModel: (selected: Model<Api> | undefined) => { model = selected; },
     replaceSession: () => { manager = SessionManager.inMemory(cwd); },
-    start, begin, input, beforeStart, answer, settle, respond, emit,
+    start, begin, input, beforeStart, answer, settle, respond, emit, rename,
   };
 }
 

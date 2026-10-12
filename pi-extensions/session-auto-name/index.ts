@@ -25,6 +25,8 @@ interface SessionState {
   warned: boolean;
   prompt: string;
   firstTitle?: string;
+  nameEntryId?: string;
+  pendingNameEntryIndex?: number;
   initialTask?: Promise<void>;
 }
 
@@ -53,8 +55,23 @@ export default function sessionAutoName(pi: ExtensionAPI): void {
 
   function active(current: SessionState, ctx: ExtensionContext): boolean {
     // Check local identity first: accessing ctx after runtime replacement can itself throw.
-    return state === current && !current.controller.signal.aborted &&
-      ctx.mode === "tui" && ctx.sessionManager.getSessionId() === current.id;
+    if (state !== current || current.controller.signal.aborted ||
+      ctx.mode !== "tui" || ctx.sessionManager.getSessionId() !== current.id) return false;
+
+    const entries = ctx.sessionManager.getEntries();
+    // setSessionName appends synchronously, but its notification can reach us before it returns
+    // or much later. Claim only the entry at our write position, never a reentrant external write.
+    if (current.pendingNameEntryIndex !== undefined) {
+      const ownEntry = entries[current.pendingNameEntryIndex];
+      if (ownEntry?.type === "session_info") current.nameEntryId = ownEntry.id;
+    }
+    // Compare entry identity, not title text: even an external same-name write takes ownership.
+    // Recheck at every boundary so direct SDK writes or delayed notifications cannot race a result.
+    if (entries.findLast((entry) => entry.type === "session_info")?.id !== current.nameEntryId) {
+      cancel();
+      return false;
+    }
+    return true;
   }
 
   function warn(current: SessionState, ctx: ExtensionContext, message: string): void {
@@ -73,7 +90,14 @@ export default function sessionAutoName(pi: ExtensionAPI): void {
   }
 
   function applyTitle(current: SessionState, ctx: ExtensionContext, title: string): void {
-    if (active(current, ctx) && pi.getSessionName() !== title) pi.setSessionName(title);
+    if (!active(current, ctx) || pi.getSessionName() === title) return;
+    current.pendingNameEntryIndex = ctx.sessionManager.getEntries().length;
+    try {
+      pi.setSessionName(title);
+    } finally {
+      active(current, ctx);
+      current.pendingNameEntryIndex = undefined;
+    }
   }
 
   async function nameInitially(current: SessionState, ctx: ExtensionContext): Promise<void> {
@@ -116,7 +140,6 @@ export default function sessionAutoName(pi: ExtensionAPI): void {
         stage: "refine", prompt: current.prompt, firstTitle: current.firstTitle, reply,
       }, current.controller.signal, { thinkingLevel });
       if (!active(current, ctx)) return;
-      // "keep" deliberately does not restore the first title over a later manual name.
       if (decision.action === "rename") applyTitle(current, ctx, decision.title);
       record(current, ctx, "completed", request);
     } catch (error) {
@@ -128,10 +151,11 @@ export default function sessionAutoName(pi: ExtensionAPI): void {
 
   pi.on("session_start", (event, ctx) => {
     cancel();
-    if (ctx.mode !== "tui" || !isNewSession(event, ctx)) return;
+    if (ctx.mode !== "tui" || pi.getSessionName() || !isNewSession(event, ctx)) return;
     const current: SessionState = {
       id: ctx.sessionManager.getSessionId(),
       controller: new AbortController(),
+      nameEntryId: ctx.sessionManager.getEntries().findLast((entry) => entry.type === "session_info")?.id,
       started: false, settled: false, warned: false, prompt: "",
     };
     state = current;
@@ -141,6 +165,11 @@ export default function sessionAutoName(pi: ExtensionAPI): void {
       warn(current, ctx, error instanceof Error ? error.message : "无法读取配置");
       cancel();
     }
+  });
+
+  pi.on("session_info_changed", (_event, ctx) => {
+    const current = state;
+    if (current) active(current, ctx);
   });
 
   pi.on("input", (event, ctx) => {
