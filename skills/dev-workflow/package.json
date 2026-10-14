@@ -1,0 +1,19 @@
+{
+  "name": "pi-dev-workflow",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Development workflow skills for Pi: align requirements, write specs, split tickets, and implement with TDD and delegated Pi sessions.",
+  "license": "MIT",
+  "keywords": ["pi-package"],
+  "pi": {
+    "skills": [
+      "./pw-spec",
+      "./pw-impl",
+      "./vendor/grilling",
+      "./vendor/to-spec",
+      "./vendor/to-tickets",
+      "./vendor/tdd",
+      "./vendor/using-git-worktrees"
+    ]
+  }
+}

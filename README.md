@@ -9,7 +9,7 @@
 
 ## Skills
 
-- **[Dev Workflow](skills/dev-workflow/)**: 软件开发工作流的预留目录，尚未提供可用 skill。
+- **[Dev Workflow](skills/dev-workflow/README.md)**: 提供 `pw-spec` 和 `pw-impl`，从需求对齐、spec 与 tickets 审阅，到 worktree 中的实现、验收与代码提交。
 
 ## Tools
 
