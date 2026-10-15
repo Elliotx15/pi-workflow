@@ -1,58 +1,79 @@
 ---
 name: pw-impl
-description: 基于 spec 和可选 tickets 实现任务，审阅编排后委派子 Pi，或直接使用 TDD 完成实现。
+description: 基于 spec 和可选 tickets 实现任务，按依赖图委派 subagent 并集成成果，或直接使用 TDD 完成实现。
 ---
 
 # PW Impl
 
 ## 步骤
 
-0. 确定任务并检查路径：
-   - 接受 spec 文件路径或 task name。提供 task name 时，从当前目录下的 `.issues/` 定位；无法抉择时让用户决定。
-   - 检查 spec、tickets 是否符合下方路径约束，且属于同一 task。任一不符合，说明理由并结束。
-   - tickets 目录不存在不算路径违规。
-1. 读取 spec、tickets 及其状态说明，梳理当前代码事实、涉及 repo、依赖与验收要求。
-2. 判断是否有 ticket：
-   - 有未完成 tickets：进入步骤 3。
-   - 全部 tickets 已为 `done`：结束。
-   - 没有 tickets，包括目录不存在或没有实际票：进入步骤 5。说明文件不计为 ticket。
-3. 给出任务编排建议，包含依赖、涉及 repo、worktree 路径及串并行安排。请用户审阅，通过后进入步骤 4。
-4. 使用 `pi-warp-delegate` 按批准的编排派发，一张 ticket 交给一个子 Pi 实现、验收并提交代码，首次提示词见下节。主 Pi 查询委派状态、读取原始 ticket 文件并推进后续任务；所有 tickets 的 `Status` 都为 `done` 时结束。
-5. 基于 spec，先使用 `/using-git-worktrees` 创建或复用 worktree，再使用 `/tdd` 实现。测试 seam 已预先批准。完成测试与验收后，在各相关 worktree 中提交本次实现改动，不夹带其他任务或用户的改动；全部提交成功后汇总并结束。
+1. 接受 spec 文件路径或 task name。提供 task name 时，从当前目录的 `.issues/` 定位；无法确定时让用户决定。
+2. 检查 spec、tickets 是否符合下方路径约束且属于同一 task，不符合则说明理由并结束。tickets 目录可以不存在。读取 spec、tickets 及状态说明，确认涉及 repo、依赖与验收要求。
+3. 根据 tickets 情况执行：
+   - 有未完成 tickets：执行下方“tickets 编排与集成”。
+   - 全部 tickets 为 `done`：结束。
+   - 没有 tickets：基于 spec，使用 `/using-git-worktrees` 创建或复用 worktree，再使用 `/tdd` 实现。测试 seam 已预先批准。通过测试与验收后，在各相关 worktree 中仅提交本次实现改动，汇总并结束。说明文件不计为 ticket。
 
-## 产物路径与 worktree 约束
+## tickets 编排与集成
+
+subagent 仅在同一 task 内复用，续接原会话上下文；无法续接时让用户决定。
+
+1. 主 Pi 使用 `/using-git-worktrees` 创建或复用各 repo 的任务集成分支与集成 worktree；仅为各 ticket 分配分支名和 worktree 路径，由实现 subagent 创建或复用。
+2. 按依赖图派发：全部前置票为 `done` 后，每张 ticket 使用一个实现 subagent，续跑或修复时复用原 subagent。无依赖的 tickets 可以并行，包括同 repo 的 tickets。执行中、待集成或已阻塞的票不重复派发。
+3. 实现成功后，按 repo 交给对应的合并 subagent。同一 repo 的各票合并复用同一个 subagent，串行执行。
+4. 主 Pi 核对结果，所有相关 repo 均已提交、集成并通过验收后，将原始 ticket 的 `Status` 改为 `done`，立即派发新解锁的票。全部完成后汇总集成分支、worktree、提交及验收结果。
+5. 失败或需用户决策时，该票保持 `ready`，保留成果并汇报阻塞原因。其依赖票等待，其他可安全推进的票继续；无可推进任务且无运行中的 subagent 时，汇总阻塞项，等待用户处理。
+
+## 路径与 worktree 约束
 
 - spec：`.issues/<task name>/<spec 文件>`，默认 `spec.md`。
 - tickets：`.issues/<task name>/tickets/`。
-- worktree：`.issues/<task name>/worktrees/wt-<repo name>`。
+- worktrees：`.issues/<task name>/worktrees/`。
 
-同一任务的路径统一锚定已确定的任务目录：
+路径统一锚定已确定的任务目录：
 
-- 每个 task 内，每个 repo 只有一个 worktree；不同 task 可以分别拥有。
-- 同 repo 的 tickets 复用 worktree，串行实现。
-- 跨 repo ticket 整体派发，执行期间占用全部相关 repo；其他涉及任一相同 repo 的 ticket 必须等待。
-- 无依赖且 repo 不重叠的 tickets 可以并行。
-- 复用时保留已有成果。无法确定归属或按规定路径创建、复用时，让用户决定，不改到其他位置实现。
+- 有 tickets 时，每个 repo 使用一个任务集成分支，集成 worktree 为 `wt-<repo name>`。
+- 每张 ticket 在各相关 repo 中使用独立分支和 worktree，基于对应集成分支创建；worktree 按创建顺序命名为 `wt-<repo name>-02`、`wt-<repo name>-03`……
+- 无 tickets 时，直接使用 `wt-<repo name>` 实现。
+- 分支与 worktree 首次创建，续跑时仅复用同一任务、同一 repo、同一用途的分支与 worktree；ticket 的分支与 worktree 还须属于同一张票。复用时保留已有成果。
+- 无法确定归属或按规定路径创建、复用时，让用户决定，不改到其他位置实现。
+- 仅在任务 worktree 中实现与合并，不夹带其他任务或用户的改动。完成后保留分支和 worktrees，不自动合入 repo 原来的分支。
 
-## pi-warp-delegate 目录约束
+## 派发提示词
 
-- `launch` 的 `--workspace` 和 `--cwd` 均显式指定为主工作区根目录（本任务 `.issues/` 的父目录），使用绝对路径。
-- `status` 显式使用派发时相同的 `--workspace`。
+首次派发使用以下固定模板，仅替换占位符；续接时补充本轮任务和必要指针。路径使用绝对路径；实现可填写多个 repo，合并每次只填写对应 repo。
 
-## 派发任务实现提示词
-
-严格使用以下固定模板，仅填写占位符要求的信息；路径使用绝对路径，repo/worktree 映射按实际涉及的 repo 逐行填写。其余内容保持不变，不得改写、删减或追加说明。
+### 实现 subagent
 
 ```text
 基于 spec（<文件绝对路径>）和 tickets（<目录绝对路径>），
-使用 /tdd 实现并验收 ticket <编号>。
-测试 seam 已预先批准。
+使用 /tdd 实现并验收 ticket <编号>。测试 seam 已预先批准。
 
-实现前使用 /using-git-worktrees 创建或复用以下 worktree，并在其中实现：
-<repo 来源绝对路径 → worktree 绝对路径>
+使用 /using-git-worktrees 创建或复用以下 worktree，并在其中实现：
+<repo 来源绝对路径 → ticket worktree 绝对路径；ticket 分支：<分支名>；集成分支：<分支名>>
 
-验收通过后，在各相关 worktree 中提交本票改动，
-再按 tickets 中的状态约定更新本票状态。
+首次创建 ticket 分支与 worktree，分支基于对应集成分支；
+续跑仅复用同一任务、同一 repo 下本票的分支与 worktree，保留已有成果。
+归属不明时报告阻塞。
+验收后仅提交本票改动，再合入最新集成分支，
+重新测试与验收，并提交必要修复。
 
-实现过程中使用 pi-warp-delegate 命令行工具更新任务状态。
+返回各 repo 的分支、提交及测试验收结果。
+遇到阻塞或需用户决策时，保留成果并报告。
+不将 ticket 分支合入集成分支，不修改 ticket 状态。
+```
+
+### 合并 subagent
+
+```text
+基于 spec（<文件绝对路径>）和 tickets（<目录绝对路径>），
+将 ticket <编号> 在以下 repo 中的成果集成到指定分支：
+<repo 来源绝对路径；ticket 分支：<分支名>；待集成提交：<提交标识> → 集成分支：<分支名>；集成 worktree：<绝对路径>>
+
+在指定集成 worktree 中合并，依据 spec 和本票要求处理冲突，
+运行相关测试与验收，仅提交本次集成改动。
+
+返回该 repo 的集成提交及测试验收结果。
+遇到阻塞或需用户决策时，保留成果并报告。
+不修改 ticket 状态，不将集成分支合入 repo 原来的分支。
 ```
