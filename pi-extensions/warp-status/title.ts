@@ -9,7 +9,7 @@ export function plainText(text: string): string {
 }
 
 export function piTitle(name: string | undefined, cwd: string): string {
-  return ["π", name && plainText(name), plainText(basename(cwd))].filter(Boolean).join(" - ");
+  return [name && plainText(name), plainText(basename(cwd))].filter(Boolean).join(" - ");
 }
 
 export class TitleAnimation {

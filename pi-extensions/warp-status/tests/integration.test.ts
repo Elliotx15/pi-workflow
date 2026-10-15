@@ -188,20 +188,20 @@ test("real Pi UI waits and asynchronous auto-naming coexist across a queued foll
   initialName.complete('{"title":"首次自动命名"}');
   await setImmediate();
   assert.equal(h.manager.getSessionName(), "首次自动命名");
-  assert.match(h.titles.at(-1)!, /^[⠴⠦⠖⠲] π - 首次自动命名 - project$/);
+  assert.match(h.titles.at(-1)!, /^[⠴⠦⠖⠲] 首次自动命名 - project$/);
 
   const dialog = h.session.extensionRunner.getUIContext().confirm("PRIVATE_DIALOG", "PRIVATE_PERMISSION");
   await setImmediate();
   assert.equal(h.events.at(-1)?.event, "question_asked");
-  assert.equal(h.titles.at(-1), "π - 首次自动命名 - project");
+  assert.equal(h.titles.at(-1), "首次自动命名 - project");
   h.session.setSessionName("等待期间改名");
   await setImmediate();
-  assert.equal(h.titles.at(-1), "π - 等待期间改名 - project");
+  assert.equal(h.titles.at(-1), "等待期间改名 - project");
   h.confirmation.resolve(true);
   await dialog;
   await setImmediate();
   assert.equal(h.events.at(-1)?.event, "prompt_submit");
-  assert.match(h.titles.at(-1)!, /^⠴ π - 等待期间改名/);
+  assert.match(h.titles.at(-1)!, /^⠴ 等待期间改名/);
 
   await h.session.followUp("PRIVATE_FOLLOW_UP");
   first.complete("PRIVATE_FIRST_REPLY");
@@ -213,7 +213,7 @@ test("real Pi UI waits and asynchronous auto-naming coexist across a queued foll
   await setImmediate();
   assert.equal(mainRequests, 2);
   assert.equal(h.manager.getSessionName(), "最终自动命名");
-  assert.equal(h.titles.at(-1), "π - 最终自动命名 - project");
+  assert.equal(h.titles.at(-1), "最终自动命名 - project");
   assert.equal(finalEvents(h.events).length, 1);
   assert.match(finalEvents(h.events)[0]!.response!, / — 已完成$/);
   assert.equal(JSON.stringify(h.events).includes("PRIVATE_"), false);
@@ -236,7 +236,7 @@ test("real automatic retry emits no final notification between low-level runs", 
   await run;
   assert.equal(finalEvents(h.events).length, 1);
   assert.equal(finalEvents(h.events)[0]?.event, "stop");
-  assert.equal(h.titles.at(-1), `π - ${basename(h.cwd)}`);
+  assert.equal(h.titles.at(-1), basename(h.cwd));
   assert.deepEqual(h.errors, []);
 });
 
@@ -256,7 +256,7 @@ test("real abort while a UI prompt remains open clears the badge and cannot resu
   await dialog;
   await setImmediate();
   assert.equal(h.events.length, count);
-  assert.equal(h.titles.at(-1), "π - project");
+  assert.equal(h.titles.at(-1), "project");
   assert.equal(finalEvents(h.events).length, 1);
   assert.deepEqual(h.errors, []);
 });
@@ -266,6 +266,6 @@ test("a real manual compaction failure before preparation reports failure withou
   await assert.rejects(h.session.compact());
   assert.equal(h.events.at(-1)?.event, "stop_failure");
   assert.equal(h.events.at(-1)?.response, "project — 执行失败");
-  assert.equal(h.titles.at(-1), "π - project");
+  assert.equal(h.titles.at(-1), "project");
   assert.deepEqual(h.errors, []);
 });

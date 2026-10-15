@@ -12,7 +12,7 @@ test("factory and idle startup do not start timers or announce work", async (t) 
   assert.deepEqual(h.events, []);
   assert.deepEqual(h.titles, []);
   await h.start();
-  assert.equal(h.title, "π - 初始会话 - my-project");
+  assert.equal(h.title, "初始会话 - my-project");
   const count = h.titles.length;
   h.tick(HEARTBEAT_MS * 2);
   assert.equal(h.titles.length, count);
@@ -27,7 +27,7 @@ test("one animation and heartbeat cover retries, compaction and queued continuat
   await h.start();
   await h.emit("agent_start");
   assert.deepEqual(h.events.map((event) => event.event), ["session_start", "prompt_submit"]);
-  assert.equal(h.title, "⠴ π - 初始会话 - my-project");
+  assert.equal(h.title, "⠴ 初始会话 - my-project");
   await h.response("error");
   await h.emit("agent_end", { messages: [] });
   h.tick(HEARTBEAT_MS);
@@ -48,7 +48,7 @@ test("one animation and heartbeat cover retries, compaction and queued continuat
   await h.settle();
   assert.equal(h.events.filter(isFinal).length, 1);
   assert.equal(h.events.at(-1)?.response, "初始会话 — 已完成");
-  assert.equal(h.title, "π - 初始会话 - my-project");
+  assert.equal(h.title, "初始会话 - my-project");
   const counts = [h.events.length, h.titles.length];
   h.tick(HEARTBEAT_MS * 2);
   assert.deepEqual([h.events.length, h.titles.length], counts);
@@ -62,13 +62,13 @@ test("all UI prompt kinds pause both timers without depending on tool names", as
     await h.emit("ui_prompt_start", { kind, title: "PRIVATE_DIALOG" });
     assert.equal(h.events.at(-1)?.event, "question_asked");
     assert.equal(h.events.at(-1)?.summary, "初始会话 — 等待操作");
-    assert.equal(h.title, "π - 初始会话 - my-project");
+    assert.equal(h.title, "初始会话 - my-project");
     const counts = [h.events.length, h.titles.length];
     h.tick(HEARTBEAT_MS * 2);
     assert.deepEqual([h.events.length, h.titles.length], counts);
     await h.emit("ui_prompt_end", { kind });
     assert.equal(h.events.at(-1)?.event, "prompt_submit");
-    assert.equal(h.title, "⠴ π - 初始会话 - my-project");
+    assert.equal(h.title, "⠴ 初始会话 - my-project");
   }
   assert.equal(h.events.filter(isFinal).length, 0);
 });
@@ -97,24 +97,24 @@ test("each frame, paused rename and final restore use the newest name", async (t
   await h.emit("agent_start");
   h.setName("第一次命名");
   h.tick(FRAME_MS);
-  assert.equal(h.title, "⠦ π - 第一次命名 - my-project");
+  assert.equal(h.title, "⠦ 第一次命名 - my-project");
   await h.rename("运行中改名");
-  assert.equal(h.title, "⠦ π - 运行中改名 - my-project");
+  assert.equal(h.title, "⠦ 运行中改名 - my-project");
   await h.openPrompt();
   await h.rename("等待期间改名");
-  assert.equal(h.title, "π - 等待期间改名 - my-project");
+  assert.equal(h.title, "等待期间改名 - my-project");
   await h.closePrompt();
   h.setName("最终命名");
   await h.settle();
-  assert.equal(h.title, "π - 最终命名 - my-project");
+  assert.equal(h.title, "最终命名 - my-project");
   assert.equal(h.events.at(-1)?.response, "最终命名 — 已完成");
   const count = h.events.length;
   await h.rename("后台完善名称");
-  assert.equal(h.title, "π - 后台完善名称 - my-project");
+  assert.equal(h.title, "后台完善名称 - my-project");
   h.tick(HEARTBEAT_MS);
   assert.equal(h.events.length, count);
   await h.rename(undefined);
-  assert.equal(h.title, "π - my-project");
+  assert.equal(h.title, "my-project");
 });
 
 test("notifications never read prompts, replies, errors, dialog titles or tool inputs", async (t) => {
@@ -215,7 +215,7 @@ test("manual compaction reports success, failure and cancellation independently"
   await h.compact();
   await h.compactionFailed("manual", true);
   assert.equal(h.events.at(-1)?.response, "初始会话 — 已取消");
-  assert.equal(h.title, "π - 初始会话 - my-project");
+  assert.equal(h.title, "初始会话 - my-project");
 });
 
 test("automatic compaction before agent_start never sends an early completion", async (t) => {
@@ -244,7 +244,7 @@ for (const reason of ["quit", "reload", "new", "resume", "fork"]) {
     assert.deepEqual([h.events.length, h.titles.length], counts);
     assert.equal(h.staleReads, 0);
     assert.equal(h.events.at(-1)?.response, "初始会话 — 已取消");
-    assert.equal(h.title, "π - 初始会话 - my-project");
+    assert.equal(h.title, "初始会话 - my-project");
   });
 }
 
@@ -271,7 +271,7 @@ test("replacing a session does not let an old heartbeat announce the new session
   assert.equal(h.events.length, count);
   await h.emit("agent_start");
   assert.equal(h.events.at(-1)?.session_id, "session-2");
-  assert.equal(h.title, "⠴ π - my-project");
+  assert.equal(h.title, "⠴ my-project");
 });
 
 for (const mode of ["rpc", "json", "print"] as const) {
