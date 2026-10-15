@@ -167,14 +167,16 @@ test("the CLI installs the local package and the real loader discovers its publi
   assert.equal(extension.commands.size, 0);
 });
 
-test("real Pi UI waits and asynchronous auto-naming coexist across a queued follow-up", { timeout: 15_000 }, async (t) => {
+async function checkAutoNamingWithQueuedFollowUp(t: TestContext, manualName?: string): Promise<void> {
   let initialName: PendingResponse | undefined;
+  const namingInputs: Record<string, unknown>[] = [];
   const firstRun = deferred<PendingResponse>();
   const followUp = deferred<PendingResponse>();
   let mainRequests = 0;
   const h = await realSession(t, (text, response) => {
     if (text.startsWith('{"firstUserPrompt":')) {
       const input = JSON.parse(text);
+      namingInputs.push(input);
       if ("finalAssistantReply" in input) response.complete('{"action":"rename","title":"最终自动命名"}');
       else initialName = response;
     } else {
@@ -194,14 +196,18 @@ test("real Pi UI waits and asynchronous auto-naming coexist across a queued foll
   await setImmediate();
   assert.equal(h.events.at(-1)?.event, "question_asked");
   assert.equal(h.titles.at(-1), "首次自动命名 - project");
-  h.session.setSessionName("等待期间改名");
-  await setImmediate();
-  assert.equal(h.titles.at(-1), "等待期间改名 - project");
+  const activeName = manualName ?? "首次自动命名";
+  if (manualName !== undefined) {
+    h.session.setSessionName(manualName);
+    await setImmediate();
+    assert.equal(h.manager.getSessionName(), manualName);
+    assert.equal(h.titles.at(-1), `${manualName} - project`);
+  }
   h.confirmation.resolve(true);
   await dialog;
   await setImmediate();
   assert.equal(h.events.at(-1)?.event, "prompt_submit");
-  assert.match(h.titles.at(-1)!, /^⠴ 等待期间改名/);
+  assert.equal(h.titles.at(-1), `⠴ ${activeName} - project`);
 
   await h.session.followUp("PRIVATE_FOLLOW_UP");
   first.complete("PRIVATE_FIRST_REPLY");
@@ -212,14 +218,30 @@ test("real Pi UI waits and asynchronous auto-naming coexist across a queued foll
   await setImmediate();
   await setImmediate();
   assert.equal(mainRequests, 2);
-  assert.equal(h.manager.getSessionName(), "最终自动命名");
-  assert.equal(h.titles.at(-1), "最终自动命名 - project");
+  assert.equal(namingInputs.length, manualName === undefined ? 2 : 1);
+  assert.deepEqual(namingInputs[0], { firstUserPrompt: "PRIVATE_USER_PROMPT" });
+  if (manualName === undefined) {
+    assert.deepEqual(namingInputs[1], {
+      firstUserPrompt: "PRIVATE_USER_PROMPT", initialTitle: "首次自动命名",
+      finalAssistantReply: "PRIVATE_FIRST_REPLY",
+    });
+  }
+  const expectedName = manualName ?? "最终自动命名";
+  assert.equal(h.manager.getSessionName(), expectedName);
+  assert.equal(h.titles.at(-1), `${expectedName} - project`);
   assert.equal(finalEvents(h.events).length, 1);
   assert.match(finalEvents(h.events)[0]!.response!, / — 已完成$/);
+  if (manualName !== undefined) assert.equal(finalEvents(h.events)[0]!.response, `${manualName} — 已完成`);
   assert.equal(JSON.stringify(h.events).includes("PRIVATE_"), false);
   assert.deepEqual(h.errors, []);
   assert.deepEqual(h.warnings, []);
-});
+}
+
+test("real Pi UI waits and asynchronous auto-naming coexist across a queued follow-up", { timeout: 15_000 },
+  (t) => checkAutoNamingWithQueuedFollowUp(t));
+
+test("real Pi UI waits preserve manual names and skip refinement across a queued follow-up", { timeout: 15_000 },
+  (t) => checkAutoNamingWithQueuedFollowUp(t, "等待期间改名"));
 
 test("real automatic retry emits no final notification between low-level runs", { timeout: 15_000 }, async (t) => {
   const retried = deferred<PendingResponse>();
