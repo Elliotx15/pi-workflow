@@ -18,3 +18,7 @@ pi install ./pi-workflow/pi-extensions/warp-status
 可与 `session-auto-name` 同时使用。请勿同时启用其他终端标题动画或 Warp 状态通知扩展，以免标题冲突或重复通知。
 
 手动取消任务也显示绿色结束徽标，通知文字为“已取消”。
+
+## 更新记录
+
+参见 [CHANGELOG.md](./CHANGELOG.md)。
