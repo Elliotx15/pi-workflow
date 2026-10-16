@@ -1,6 +1,6 @@
 {
   "name": "pi-session-auto-name",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Name new Pi sessions from the first prompt, then refine the title after the first reply.",
   "type": "module",
@@ -21,8 +21,8 @@
     "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "1.1.0",
-    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@earendil-works/pi-ai": "1.2.0",
+    "@earendil-works/pi-coding-agent": "1.2.0",
     "@types/node": "22.20.4",
     "typescript": "5.9.3"
   }

@@ -9,11 +9,11 @@ git clone https://github.com/Elliotx15/pi-workflow.git pi-workflow
 pi install ./pi-workflow/pi-extensions/session-auto-name
 ```
 
-重新启动 Pi，或执行 `/reload` 后新建 session。本扩展使用 `@earendil-works/pi-coding-agent` 的扩展 API，已适配 Pi 1.1.0。
+重新启动 Pi，或执行 `/reload` 后新建 session。本扩展使用 `@earendil-works/pi-coding-agent` 的扩展 API，已适配 Pi 1.2.0。
 
 ## 命名与名称保护
 
-仅对 TUI 中的新 session 生效，不补命名已有 session。每个符合条件的 session 最多额外发起两次命名请求。
+仅对 TUI 中的新 session 生效，不补命名已有 session。每个符合条件的 session 最多额外发起两次命名请求。其他扩展通过自定义消息触发的运行不会启动或消耗首次用户提示词的命名流程。
 
 **外部命名优先，自动命名不会覆盖外部设置的名称：**
 

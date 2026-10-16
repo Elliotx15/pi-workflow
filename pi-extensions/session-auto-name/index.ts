@@ -179,7 +179,9 @@ export default function sessionAutoName(pi: ExtensionAPI): void {
     current.pendingInput = { text: event.text, source: event.source };
   });
 
-  pi.on("before_agent_start", (_event, ctx) => {
+  pi.on("before_agent_start", (event, ctx) => {
+    // Pi 1.2 also emits this for custom-message runs; leave first-user naming untouched.
+    if (event.messageType === "custom") return;
     const current = state;
     if (!current || !active(current, ctx) || current.started) return;
     const input = current.pendingInput;

@@ -44,7 +44,7 @@ test("pi install accepts the extension directory and the real loader discovers i
 
 type Takeover = "none" | "startup" | "initial" | "refinement" | "extension" | "notification";
 
-async function checkRealLifecycle(t: TestContext, takeover: Takeover): Promise<void> {
+async function checkRealLifecycle(t: TestContext, takeover: Takeover, prelude?: "custom" | "handled-custom"): Promise<void> {
   const cwd = tempDirectory(t);
   const agentDir = join(cwd, "agent");
   mkdirSync(agentDir);
@@ -63,6 +63,9 @@ async function checkRealLifecycle(t: TestContext, takeover: Takeover): Promise<v
   const model = { ...sessionModel, api: "test-session-auto-name" };
   const namingInputs: Record<string, unknown>[] = [];
   let mainRequests = 0;
+  let backgroundRequests = 0;
+  const backgroundPrompt = "Background task before the first user prompt";
+  const triggerTypes: string[] = [];
   let initialStream: AssistantMessageEventStream | undefined;
   let refinementStream: AssistantMessageEventStream | undefined;
   let namingSignal: AbortSignal | undefined;
@@ -91,6 +94,9 @@ async function checkRealLifecycle(t: TestContext, takeover: Takeover): Promise<v
         } else {
           initialStream = stream;
         }
+      } else if (text === backgroundPrompt) {
+        backgroundRequests++;
+        complete(stream, "Background task completed.");
       } else {
         mainRequests++;
         if (mainRequests === 1) {
@@ -116,6 +122,11 @@ async function checkRealLifecycle(t: TestContext, takeover: Takeover): Promise<v
         description: "Set a name from another extension",
         handler: async () => { pi.setSessionName(externalName); },
       });
+      // File extensions load first, so auto-name observes this input before it is consumed.
+      pi.on("input", (event) => {
+        if (event.text === "Consumed locally") return { action: "handled" };
+      });
+      pi.on("before_agent_start", (event) => { triggerTypes.push(event.messageType); });
     }],
   });
   await resourceLoader.reload();
@@ -142,6 +153,20 @@ async function checkRealLifecycle(t: TestContext, takeover: Takeover): Promise<v
     if (event.name === "修复 OAuth 回调状态校验") refined.resolve();
     if (takeover === "notification" && event.name === "修复 OAuth 登录问题") session.setSessionName(externalName);
   });
+  if (prelude) {
+    if (prelude === "handled-custom") await session.prompt("Consumed locally");
+    await session.sendCustomMessage({
+      customType: "background-task", content: backgroundPrompt, display: false,
+    }, { triggerTurn: true });
+    await flush();
+    assert.equal(mainRequests, 0);
+    assert.equal(backgroundRequests, 1);
+    assert.deepEqual(triggerTypes, ["custom"]);
+    assert.equal(namingInputs.length, 0, "custom runs must not name a previously handled input");
+    assert.equal(manager.getSessionName(), undefined);
+    assert.equal(manager.getEntries().filter((entry) => entry.type === "custom" &&
+      entry.customType === "session-auto-name").length, 0, "custom runs must not consume the naming cycle");
+  }
   await session.prompt("修复 OAuth 登录问题");
   assert.equal(mainRequests, 2);
   assert.equal(session.getLastAssistantText(), "Completed the unrelated follow-up task.");
@@ -179,6 +204,11 @@ async function checkRealLifecycle(t: TestContext, takeover: Takeover): Promise<v
 
 test("real Pi lifecycle stays non-blocking and names the first exchange, not a queued follow-up", { timeout: 10_000 },
   (t) => checkRealLifecycle(t, "none"));
+
+for (const prelude of ["custom", "handled-custom"] as const) {
+  test(`real Pi custom-message runs preserve first-user naming: ${prelude}`, { timeout: 10_000 },
+    (t) => checkRealLifecycle(t, "none", prelude));
+}
 
 for (const takeover of ["startup", "initial", "refinement", "extension", "notification"] as const) {
   test(`real Pi lifecycle protects external names: ${takeover}`, { timeout: 10_000 },

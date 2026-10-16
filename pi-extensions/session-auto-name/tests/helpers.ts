@@ -107,7 +107,7 @@ export function harness(t: TestContext, options: { mode?: ExtensionContext["mode
     await emit({ type: "session_info_changed", name: manager.getSessionName() });
   };
   const beforeStart = async (prompt: string) => emit({
-    type: "before_agent_start", prompt, systemPrompt: "Never send this system prompt to the naming model",
+    type: "before_agent_start", messageType: "user", prompt, systemPrompt: "Never send this system prompt to the naming model",
     systemPromptOptions: {} as BeforeAgentStartEvent["systemPromptOptions"],
   });
   const input = async (text: string, source: InputSource = "interactive") => emit({ type: "input", text, source });

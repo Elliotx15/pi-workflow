@@ -4,7 +4,7 @@
 
 ## 安装
 
-需要 macOS、支持 Tab Configs 的 Warp Stable、Node.js ≥ 22.19，以及已安装并可正常使用的 Pi。初始兼容目标为 Pi 1.1.0。
+需要 macOS、支持 Tab Configs 的 Warp Stable、Node.js ≥ 22.19，以及已安装并可正常使用的 Pi。当前兼容目标为 Pi 1.2.0。
 
 ```bash
 git clone https://github.com/Elliotx15/pi-workflow.git pi-workflow

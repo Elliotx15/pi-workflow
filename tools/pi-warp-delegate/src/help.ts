@@ -79,7 +79,7 @@ const LAUNCH = `LAUNCH
                        Missing model/thinking still returns needs_input.
 
   Requires macOS, Warp Stable with Tab Config URI support, and a Node-based pi
-  executable on PATH (Pi 1.1.0 is the initial compatibility target). Pi is not run
+  executable on PATH (compatibility target: Pi 1.2.0). Pi is not run
   during preflight. The resolved Node/Pi entries are used explicitly in Warp;
   no shell aliases or shim scripts. No key or temporary credential is copied.
   New Pi uses its ordinary credentials and project trust; no --approve override.

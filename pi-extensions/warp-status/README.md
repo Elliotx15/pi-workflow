@@ -9,7 +9,7 @@ git clone https://github.com/Elliotx15/pi-workflow.git pi-workflow
 pi install ./pi-workflow/pi-extensions/warp-status
 ```
 
-重新启动 Pi，或执行 `/reload` 启用，无需额外配置。本扩展使用 `@earendil-works/pi-coding-agent` 的扩展 API，已适配 Pi 1.1.0。
+重新启动 Pi，或执行 `/reload` 启用，无需额外配置。本扩展使用 `@earendil-works/pi-coding-agent` 的扩展 API，已适配 Pi 1.2.0。
 
 仅支持 macOS 下在 Warp 中直接运行 Pi TUI，需使用支持 CLI agent 状态通知的 Warp 版本，不支持 tmux／SSH。
 
