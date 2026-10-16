@@ -3,7 +3,7 @@
 软件开发工作流 skills：
 
 - [pw-spec](pw-spec/SKILL.md)：对齐需求与方案，生成 spec，并按需拆分 tickets，交给用户审阅，不自动实现。
-- [pw-impl](pw-impl/SKILL.md)：基于 spec 和可选 tickets，在任务专属 worktree 中实现、验收并提交代码；有 tickets 时，按依赖图委派 subagent 并集成成果。
+- [pw-impl](pw-impl/SKILL.md)：基于 spec 和可选 tickets，在任务专属 worktree 中实现、验收并提交代码；有 tickets 时，按依赖图委派 subagent 并按需集成成果。
 
 ## 安装
 
@@ -29,9 +29,9 @@ pi install ./skills/dev-workflow
 
 skill 正文中的 `/grilling`、`/tdd` 等表示调用对应 skill；在 Pi 中显式调用时使用 `/skill:<name>`，例如 `/skill:tdd`、`/skill:using-git-worktrees`。
 
-产物位于目标项目的 `.issues/<task name>/`：spec 默认为 `spec.md`，按需生成的 tickets 及状态说明位于 `tickets/`，worktree 位于 `worktrees/`。有 tickets 时，每个 repo 的集成 worktree 为 `wt-<repo name>`，各 ticket 的独立 worktree 按创建顺序使用 `wt-<repo name>-02`、`wt-<repo name>-03`……；没有 tickets 时，直接使用 `wt-<repo name>` 实现。
+产物位于目标项目的 `.issues/<task name>/`：spec 默认为 `spec.md`，按需生成的 tickets 及状态说明位于 `tickets/`，worktree 位于 `worktrees/`。每个 repo 的任务 worktree 为 `wt-<repo name>`。有 tickets 时，按整个 task 中会修改该 repo 的票数选择模式：只有一张票时直接在任务 worktree 中实现；多张票时将其作为集成 worktree，各 ticket 的独立 worktree 按创建顺序使用 `wt-<repo name>-02`、`wt-<repo name>-03`……。续跑沿用已有模式与布局。没有 tickets 时，直接使用 `wt-<repo name>` 实现。
 
-审阅 `pw-spec` 的产物后，调用 `pw-impl` 开始实现。有 tickets 时，主 Pi 按依赖图派发 subagent，每票在所有相关 repo 中提交、集成并通过验收后，由主 Pi 将原始 ticket 的 `Status` 改为 `done`；没有 tickets 时，主 Pi 直接实现、验收并提交代码。
+审阅 `pw-spec` 的产物后，调用 `pw-impl` 开始实现。有 tickets 时，主 Pi 按依赖图派发 subagent，每票在所有相关 repo 中提交、完成必要的集成并通过验收后，由主 Pi 将原始 ticket 的 `Status` 改为 `done`；没有 tickets 时，主 Pi 直接实现、验收并提交代码。
 
 完整约定见 [pw-spec/SKILL.md](pw-spec/SKILL.md) 和 [pw-impl/SKILL.md](pw-impl/SKILL.md)。
 
