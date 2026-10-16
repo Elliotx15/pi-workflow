@@ -31,7 +31,9 @@ skill 正文中的 `/grilling`、`/tdd` 等表示调用对应 skill；在 Pi 中
 
 产物位于目标项目的 `.issues/<task name>/`：spec 默认为 `spec.md`，按需生成的 tickets 及状态说明位于 `tickets/`，worktree 位于 `worktrees/`。每个 repo 的任务 worktree 为 `wt-<repo name>`。有 tickets 时，按整个 task 中会修改该 repo 的票数选择模式：只有一张票时直接在任务 worktree 中实现；多张票时将其作为集成 worktree，各 ticket 的独立 worktree 按创建顺序使用 `wt-<repo name>-02`、`wt-<repo name>-03`……。续跑沿用已有模式与布局。没有 tickets 时，直接使用 `wt-<repo name>` 实现。
 
-审阅 `pw-spec` 的产物后，调用 `pw-impl` 开始实现。有 tickets 时，主 Pi 按依赖图派发 subagent，每票在所有相关 repo 中提交、完成必要的集成并通过验收后，由主 Pi 将原始 ticket 的 `Status` 改为 `done`；没有 tickets 时，主 Pi 直接实现、验收并提交代码。
+`pw-spec` 在 `/grilling` 收尾时总结测试方案与 Acceptance criteria 设计，请用户确认设计摘要后生成 spec 和可选 tickets，再交给用户审阅具体规则。spec 的验收标准面向整体需求，ticket 的验收标准面向拆分后的需求。
+
+审阅 `pw-spec` 的产物后，调用 `pw-impl` 开始实现。有 tickets 时，主 Pi 按依赖图派发 subagent，单票测试与验收以本票文档为准；每票在所有相关 repo 中提交、完成必要的集成并通过验收后，由主 Pi 将原始 ticket 的 `Status` 改为 `done`。全部 tickets 完成后，由主 Pi 在各 repo 的任务 worktree 中依据 spec 和 tickets 文档执行 task 整体测试与验收；没有 tickets 时，主 Pi 依据 spec 直接实现、验收并提交代码。执行时不自行增减或改变文档约定的测试要求与验收标准。
 
 完整约定见 [pw-spec/SKILL.md](pw-spec/SKILL.md) 和 [pw-impl/SKILL.md](pw-impl/SKILL.md)。
 
