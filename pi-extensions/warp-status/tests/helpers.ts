@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import type { TestContext } from "node:test";
+import { createEventBus } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext, ExtensionEvent } from "@earendil-works/pi-coding-agent";
 import { createWarpStatusExtension } from "../index.ts";
 import type { WarpEvent } from "../protocol.ts";
@@ -20,7 +21,7 @@ export function harness(t: TestContext, options: {
   write?: (sequence: string) => void;
   setTitle?: (title: string) => void;
 } = {}) {
-  t.mock.timers.enable({ apis: ["setInterval"] });
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
   let id = "session-1";
   let name: string | undefined = "初始会话";
   let valid = true;
@@ -30,6 +31,7 @@ export function harness(t: TestContext, options: {
   const cwd = "/workspace/my-project";
   const titles: string[] = [];
   const events: WarpEvent[] = [];
+  const bus = createEventBus();
   const handlers = new Map<string, ((event: ExtensionEvent, ctx: ExtensionContext) => unknown)[]>();
   const assertActive = () => {
     if (!valid) staleReads++;
@@ -45,6 +47,7 @@ export function harness(t: TestContext, options: {
     ui: { setTitle: options.setTitle ?? ((title: string) => { assertActive(); titles.push(title); }) },
   } as unknown as ExtensionContext;
   const pi = {
+    events: bus,
     on(type: string, handler: (event: ExtensionEvent, ctx: ExtensionContext) => unknown) {
       const list = handlers.get(type) ?? [];
       list.push(handler);
@@ -73,7 +76,7 @@ export function harness(t: TestContext, options: {
   }
   t.after(shutdown);
   return {
-    cwd, titles, events, handlers, emit, start, shutdown,
+    cwd, titles, events, bus, handlers, emit, start, shutdown,
     tick: (ms: number) => t.mock.timers.tick(ms),
     get title() { return titles.at(-1); },
     get staleReads() { return staleReads; },

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { setImmediate } from "node:timers/promises";
+import { setImmediate, setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import type { TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -12,10 +12,12 @@ import type { Api, AssistantMessage, Context, Model } from "@earendil-works/pi-a
 import {
   createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentSession, ExtensionError, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ExtensionError, ExtensionFactory, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { createWarpStatusExtension } from "../index.ts";
 import type { WarpEvent } from "../protocol.ts";
 import { decode, deferred, warpEnv } from "./helpers.ts";
+import { SUBAGENT_IDLE_GRACE_MS } from "../subagents.ts";
+import { subagentPeer } from "./subagent-helpers.ts";
 
 const extensionDir = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const model: Model<Api> = {
@@ -70,6 +72,7 @@ function lastUser(context: Context): string {
 async function realSession(t: TestContext, handleRequest: (text: string, response: PendingResponse) => void, options: {
   autoName?: boolean;
   retry?: boolean;
+  extensions?: ExtensionFactory[];
 } = {}) {
   const root = mkdtempSync(join(tmpdir(), "pi-warp-status-"));
   const cwd = join(root, "project");
@@ -116,6 +119,7 @@ async function realSession(t: TestContext, handleRequest: (text: string, respons
     additionalExtensionPaths: options.autoName ? [resolve(extensionDir, "../session-auto-name/index.ts")] : [],
     extensionFactories: [
       createWarpStatusExtension({ platform: "darwin", env: warpEnv, write: (wire) => events.push(decode(wire)) }),
+      ...(options.extensions ?? []),
     ],
     noExtensions: true, noSkills: true, noThemes: true, noPromptTemplates: true, noContextFiles: true,
   });
@@ -281,6 +285,52 @@ test("real abort while a UI prompt remains open clears the badge and cannot resu
   assert.equal(h.titles.at(-1), "project");
   assert.equal(finalEvents(h.events).length, 1);
   assert.deepEqual(h.errors, []);
+});
+
+test("real Pi stays working across an optional RPC companion's background work and parent wake", { timeout: 15_000 }, async (t) => {
+  let peer!: ReturnType<typeof subagentPeer>;
+  let wake!: () => void;
+  let settled = 0;
+  const finished = deferred<void>();
+  const nextResponse = deferred<PendingResponse>();
+  const companion: ExtensionFactory = (pi) => {
+    peer = subagentPeer(pi.events);
+    peer.active = 2;
+    wake = () => pi.sendUserMessage("PRIVATE_SUBAGENT_WAKE");
+    pi.on("session_start", (_event, ctx) => {
+      peer.sessionId = ctx.sessionManager.getSessionId();
+      peer.ready();
+    });
+    pi.on("agent_settled", () => { if (++settled === 2) finished.resolve(); });
+    pi.on("session_shutdown", () => peer.dispose());
+  };
+  const h = await realSession(t, (text, response) => {
+    if (text === "PRIVATE_SUBAGENT_WAKE") nextResponse.resolve(response);
+    else response.complete("PRIVATE_LAUNCHED_REPLY");
+  }, { extensions: [companion] });
+  await h.session.prompt("PRIVATE_LAUNCH");
+  assert.equal(finalEvents(h.events).length, 0);
+  assert.match(h.titles.at(-1)!, /^[⠴⠦⠖⠲] /);
+  peer.active = 1;
+  peer.hint("subagent:async-complete");
+  await setImmediate();
+  assert.equal(finalEvents(h.events).length, 0);
+  peer.active = 0;
+  peer.hint("subagent:async-complete");
+  await setImmediate();
+  wake();
+  const response = await nextResponse.promise;
+  await delay(SUBAGENT_IDLE_GRACE_MS + 100);
+  assert.equal(finalEvents(h.events).length, 0);
+  assert.match(h.titles.at(-1)!, /^[⠴⠦⠖⠲] /);
+  assert.equal(h.events.filter((event) => event.event === "prompt_submit").length, 1);
+  response.complete("PRIVATE_SUMMARY_REPLY");
+  await finished.promise;
+  assert.equal(finalEvents(h.events).length, 1);
+  assert.equal(h.titles.at(-1), "project");
+  assert.deepEqual(h.errors, []);
+  assert.deepEqual(h.warnings, []);
+  assert.equal(JSON.stringify(h.events).includes("PRIVATE_"), false);
 });
 
 test("a real manual compaction failure before preparation reports failure without starting timers", { timeout: 15_000 }, async (t) => {

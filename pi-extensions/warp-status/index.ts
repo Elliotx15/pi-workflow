@@ -4,6 +4,8 @@ import type { Outcome, Phase } from "./state.ts";
 import { encodeEvent, makeEvent, supportsWarp, writeTerminal } from "./protocol.ts";
 import type { WarpSignal } from "./protocol.ts";
 import { piTitle, TitleAnimation } from "./title.ts";
+import { monitorSubagents } from "./subagents.ts";
+import type { SubagentMonitor } from "./subagents.ts";
 
 export const HEARTBEAT_MS = 15_000;
 
@@ -15,6 +17,8 @@ interface SessionRuntime {
   title: TitleAnimation;
   phase: Phase;
   announced: boolean;
+  runGeneration: number;
+  subagents?: SubagentMonitor;
   heartbeat?: ReturnType<typeof setInterval>;
   compactionSignal?: AbortSignal;
 }
@@ -53,6 +57,7 @@ export function createWarpStatusExtension(options: RuntimeOptions = {}): Extensi
     }
 
     function update(session: SessionRuntime, outcome?: Outcome): void {
+      if (current !== session) return;
       const phase = session.activity.phase;
       if (phase !== session.phase) {
         clearHeartbeat(session);
@@ -90,6 +95,7 @@ export function createWarpStatusExtension(options: RuntimeOptions = {}): Extensi
       const session = current;
       if (!session) return;
       clearHeartbeat(session);
+      session.subagents?.dispose();
       session.title.dispose(restore);
       current = undefined;
     }
@@ -100,7 +106,7 @@ export function createWarpStatusExtension(options: RuntimeOptions = {}): Extensi
       const cwd = ctx.sessionManager.getCwd();
       const session: SessionRuntime = {
         id: ctx.sessionManager.getSessionId(), cwd, ctx,
-        activity: new ActivityState(), phase: "idle", announced: false,
+        activity: new ActivityState(), phase: "idle", announced: false, runGeneration: 0,
         title: new TitleAnimation(
           () => piTitle(pi.getSessionName(), cwd),
           (title) => { if (current === session) session.ctx.ui.setTitle(title); },
@@ -108,6 +114,10 @@ export function createWarpStatusExtension(options: RuntimeOptions = {}): Extensi
       };
       current = session;
       session.title.refresh();
+      session.subagents = monitorSubagents(pi.events, session.id, (active) => {
+        if (current !== session) return;
+        update(session, session.activity.setBackground(active));
+      });
     });
 
     pi.on("session_info_changed", (_event, ctx) => {
@@ -117,6 +127,7 @@ export function createWarpStatusExtension(options: RuntimeOptions = {}): Extensi
     pi.on("agent_start", (_event, ctx) => {
       const session = useSession(ctx);
       if (!session) return;
+      session.runGeneration++;
       session.activity.startRun();
       update(session);
     });
@@ -128,9 +139,15 @@ export function createWarpStatusExtension(options: RuntimeOptions = {}): Extensi
       session.activity.recordResponse(reason === "error" ? "failed" : reason === "aborted" ? "cancelled" : "completed");
     });
 
-    pi.on("agent_settled", (event, ctx) => {
+    pi.on("agent_settled", async (event, ctx) => {
       const session = useSession(ctx);
       if (!session) return;
+      const generation = session.runGeneration;
+      // Refresh before retiring the parent, including launches not yet polled.
+      // An absent/unsupported companion does not delay normal settlement.
+      const refresh = session.subagents?.refresh();
+      if (refresh) await refresh;
+      if (current !== session || generation !== session.runGeneration) return;
       update(session, session.activity.settle(event.aborted));
     });
 
@@ -167,7 +184,7 @@ export function createWarpStatusExtension(options: RuntimeOptions = {}): Extensi
       const session = useSession(ctx);
       if (!session) return;
       // An aborted dialog can close before the cancelled operation has settled.
-      if (session.activity.active && (ctx.signal?.aborted || session.compactionSignal?.aborted)) return;
+      if (session.activity.foregroundActive && (ctx.signal?.aborted || session.compactionSignal?.aborted)) return;
       session.activity.closePrompt();
       update(session);
     });

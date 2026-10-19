@@ -1,15 +1,30 @@
 export type Phase = "idle" | "working" | "blocked";
 export type Outcome = "completed" | "failed" | "cancelled";
 
-/** An agent run stays open across low-level agent_end and retry boundaries. */
+/** An activity covers the parent run, compaction, and optional background work. */
 export class ActivityState {
   private running = false;
   private compacting = false;
+  private background = false;
   private prompts = 0;
   private outcome: Outcome = "completed";
 
-  get active(): boolean {
+  get foregroundActive(): boolean {
     return this.running || this.compacting;
+  }
+
+  get active(): boolean {
+    return this.foregroundActive || this.background;
+  }
+
+  setBackground(active: boolean | undefined): Outcome | undefined {
+    if (active && !this.active) this.outcome = "completed";
+    const wasBackground = this.background;
+    this.background = active === true;
+    if (!wasBackground || this.active) return undefined;
+    this.prompts = 0;
+    // Losing the observer must not turn unknown child state into a success.
+    return active === false ? this.outcome : undefined;
   }
 
   get phase(): Phase {
@@ -31,7 +46,7 @@ export class ActivityState {
     if (aborted) this.outcome = "cancelled";
     if (this.compacting) return undefined;
     this.prompts = 0;
-    return this.outcome;
+    return this.background ? undefined : this.outcome;
   }
 
   startCompaction(manual: boolean): void {
@@ -47,8 +62,9 @@ export class ActivityState {
       return undefined;
     }
     if (!manual) return undefined;
+    this.outcome = outcome;
     this.prompts = 0;
-    return outcome;
+    return this.background ? undefined : outcome;
   }
 
   openPrompt(): void {
